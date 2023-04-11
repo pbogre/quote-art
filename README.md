@@ -1,4 +1,4 @@
-# quote-art
+# quote-art
 Generate quote art from your terminal
 
 # examples

@@ -5,12 +5,11 @@
 #include <time.h>
 #include <wchar.h>
 #include <locale.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
 
-#define LENGTH 10
-#define HEIGHT 10
-
-#define P_WORD 4
-#define P_TURN 2
+#define P_WORD 12
+#define P_TURN 3
 
 #define CLEAR_SCREEN printf("\e[1;1H\e[2J")
 #define RAND_IN_RANGE_0(min0, max0) rand() % (max0+1) + min0
@@ -33,6 +32,7 @@ struct QUOTEINFO{
   // used in main loop
   int current_letter;
   int current_word;
+  int spelling;
 };
 
 struct QUOTEINFO string_to_quote(char * string){
@@ -75,19 +75,22 @@ struct QUOTEINFO string_to_quote(char * string){
   return quote;
 }
 
-void print_grid(wchar_t ** grid){
-  for(int row = 0; row < HEIGHT; row++){
-    for(int col = 0; col < LENGTH; col++) printf("%lc", grid[row][col]);
+void print_grid(wchar_t ** grid, int height, int length){
+  for(int row = 0; row < height; row++){
+    for(int col = 0; col < length; col++) printf("%lc", grid[row][col]);
     printf("\n");
   }
 }
 
 
 
-
 int main(int argc, char ** argv){
   srand(time(NULL));
   setlocale(LC_ALL, "");
+  struct winsize size;
+  ioctl(STDOUT_FILENO, TIOCGWINSZ, &size);
+  int HEIGHT = size.ws_row - 1;
+  int LENGTH = size.ws_col - 1;
   
   // initialize grid
   wchar_t ** grid = malloc(sizeof(void*) * HEIGHT);
@@ -100,18 +103,20 @@ int main(int argc, char ** argv){
   int col = 1;
 
   char * string = "this is a beautiful quote";
-  int word = 1;
   struct QUOTEINFO quote = string_to_quote(string);
   quote.current_word = 0;
   quote.current_letter = 0;
+  quote.spelling = 1;
 
-  wchar_t * curves = L"││╰╯││╭╮╮╯──╭╰──";
+  wchar_t * curves = L"│X╰╯X│╭╮╮╯─X╭╰X─";
+  wchar_t * arrows = L"↑X↗↖X↓↙↘↖↙←X↗↘X→";
 
   enum direction move = RAND_IN_RANGE_0(0, 3);
   enum direction past = move;
 
-  int count = 0;
-  while(quote.current_word != quote.word_count){
+  int consecutive_lines = 0;
+  int last_was_letter = 0; 
+  while(quote.current_word <  quote.word_count){
     past = move;
 
     // detect valid moves
@@ -134,11 +139,10 @@ int main(int argc, char ** argv){
 	}
       }
     }
-
     if(possible == 0) break;
 
     // turn if: (by chance AND not spelling) OR cannot keep going straight
-    if((!word && RAND_IN_RANGE(1, P_TURN) == 1) || valid_moves[move] == 0){ 
+    if((!quote.spelling && RAND_IN_RANGE(1, P_TURN) == 1) || valid_moves[move] == 0){ 
      
       // if want to turn and current direction isn't only valid one, exclude current direction
       // so if it wants to turn, it will go in a DIFFERENT direction as long as it can
@@ -150,22 +154,39 @@ int main(int argc, char ** argv){
       move = random_move(valid_moves);
     }
 
-  if(RAND_IN_RANGE(1, P_WORD) == 1){
-    word = 1;
-  }
+    // start spelling if: by chance AND at least 2 consecutive lines
+    if(RAND_IN_RANGE(1, P_WORD) == 1 && consecutive_lines > 1) quote.spelling = 1;
 
     // 00 01 02 03 10 11 12 13 20 21 22 23 30 31 32 33
-    // │  │  ╰  ╯  │  │  ╭  ╮  ╮  ╯  ─  ─  ╭  ╰  ─  ─
+    // │  X  ╰  ╯  X  │  ╭  ╮  ╮  ╯  ─  X  ╭  ╰  X  ─
 
-    if(!word) grid[row][col] = curves[4 * move + past];
+    if(!quote.spelling){
+      grid[row][col] = curves[4 * move + past];
+      consecutive_lines++;
+    }
     else{
-      grid[row][col] = quote.words[quote.current_word][quote.current_letter];
-      quote.current_letter++;
-      // if last letter of current word;
-      if(quote.current_letter  == quote.letter_count[quote.current_word]){
+      // if last letter of current word stop spelling
+      if(quote.current_letter  == quote.letter_count[quote.current_word]){ 
+	quote.spelling = 0;
 	quote.current_word++;
 	quote.current_letter = 0;
-	word = 0;
+	consecutive_lines = 0;
+
+	continue;
+      }
+
+      else{
+	// set current cell to current letter of current word, increment current letter
+	grid[row][col] = quote.words[quote.current_word][quote.current_letter];
+	// if last character was a letter, now place an arrow
+	if(last_was_letter){
+	  grid[row][col] = arrows[4 * move + past];
+	  last_was_letter = 0;
+	}
+	else{
+	  last_was_letter = 1;
+	  quote.current_letter++;
+	}
       }
     };
 
@@ -173,10 +194,9 @@ int main(int argc, char ** argv){
     if(move == down) 	row++;
     if(move == left) 	col--;
     if(move == right) 	col++;
-    count++;
 
     CLEAR_SCREEN;
-    print_grid(grid);
+    print_grid(grid, HEIGHT, LENGTH);
     
     usleep(0.1 * 1000 * 1000);
   }
